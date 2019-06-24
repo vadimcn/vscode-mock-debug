@@ -41,6 +41,8 @@ export class MockDebugSession extends LoggingDebugSession {
 
 	private _configurationDone = new Subject();
 
+	private _numThreads = 5;
+
 	/**
 	 * Creates a new debug adapter that is used for one debug session.
 	 * We configure the default implementation of a debug adapter here.
@@ -56,19 +58,19 @@ export class MockDebugSession extends LoggingDebugSession {
 
 		// setup event handlers
 		this._runtime.on('stopOnEntry', () => {
-			this.sendEvent(new StoppedEvent('entry', MockDebugSession.THREAD_ID));
+			this.sendStoppedEvent(new StoppedEvent('entry', MockDebugSession.THREAD_ID));
 		});
 		this._runtime.on('stopOnStep', () => {
-			this.sendEvent(new StoppedEvent('step', MockDebugSession.THREAD_ID));
+			this.sendStoppedEvent(new StoppedEvent('step', MockDebugSession.THREAD_ID));
 		});
 		this._runtime.on('stopOnBreakpoint', () => {
-			this.sendEvent(new StoppedEvent('breakpoint', MockDebugSession.THREAD_ID));
+			this.sendStoppedEvent(new StoppedEvent('breakpoint', MockDebugSession.THREAD_ID));
 		});
 		this._runtime.on('stopOnException', () => {
-			this.sendEvent(new StoppedEvent('exception', MockDebugSession.THREAD_ID));
+			this.sendStoppedEvent(new StoppedEvent('exception', MockDebugSession.THREAD_ID));
 		});
 		this._runtime.on('breakpointValidated', (bp: MockBreakpoint) => {
-			this.sendEvent(new BreakpointEvent('changed', <DebugProtocol.Breakpoint>{ verified: bp.verified, id: bp.id }));
+			this.sendStoppedEvent(new BreakpointEvent('changed', <DebugProtocol.Breakpoint>{ verified: bp.verified, id: bp.id }));
 		});
 		this._runtime.on('output', (text, filePath, line, column) => {
 			const e: DebugProtocol.OutputEvent = new OutputEvent(`${text}\n`);
@@ -80,6 +82,11 @@ export class MockDebugSession extends LoggingDebugSession {
 		this._runtime.on('end', () => {
 			this.sendEvent(new TerminatedEvent());
 		});
+	}
+
+	private sendStoppedEvent(event: StoppedEvent) {
+		(<DebugProtocol.StoppedEvent>event).body.allThreadsStopped = true;
+		this.sendEvent(event);
 	}
 
 	/**
@@ -158,16 +165,25 @@ export class MockDebugSession extends LoggingDebugSession {
 
 	protected threadsRequest(response: DebugProtocol.ThreadsResponse): void {
 
-		// runtime supports now threads so just return a default thread.
+		let threads: Thread[] = [];
+		for (let i = 0; i < this._numThreads; ++i) {
+			threads.push(new Thread(MockDebugSession.THREAD_ID + i, `thread ${MockDebugSession.THREAD_ID + i}`));
+		}
 		response.body = {
-			threads: [
-				new Thread(MockDebugSession.THREAD_ID, "thread 1")
-			]
+			threads: threads
 		};
 		this.sendResponse(response);
 	}
 
 	protected stackTraceRequest(response: DebugProtocol.StackTraceResponse, args: DebugProtocol.StackTraceArguments): void {
+
+		if (args.threadId < MockDebugSession.THREAD_ID || args.threadId >= MockDebugSession.THREAD_ID + this._numThreads)
+		{
+			response.success = false;
+			response.message = `Invalid thread id: ${args.threadId }`;
+			this.sendResponse(response)
+			return;
+		}
 
 		const startFrame = typeof args.startFrame === 'number' ? args.startFrame : 0;
 		const maxLevels = typeof args.levels === 'number' ? args.levels : 1000;
@@ -245,6 +261,7 @@ export class MockDebugSession extends LoggingDebugSession {
 	protected nextRequest(response: DebugProtocol.NextResponse, args: DebugProtocol.NextArguments): void {
 		this._runtime.step();
 		this.sendResponse(response);
+		this._numThreads -= 1;
 	}
 
 	protected stepBackRequest(response: DebugProtocol.StepBackResponse, args: DebugProtocol.StepBackArguments): void {
